@@ -1,22 +1,13 @@
 import os, time, threading
 from flask import Flask, request, jsonify
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
-# Pull token from Render environment variables
-API_TOKEN    = os.environ.get("BRIDGE_TOKEN", "mysupersecrettoken123")
+# The exact password we are using everywhere
+API_TOKEN    = "AIMSENSE-SECRET-123"
 COMMAND_TTL  = 30.0
 PRESENCE_TTL = 20.0
 PORT         = int(os.environ.get("PORT", 8080))
 
 app = Flask(__name__)
-# Rate limiter: max 60 requests per minute per IP
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["60 per minute"]
-)
-
 _lock = threading.Lock()
 _queue = []
 _presence = {}
@@ -27,7 +18,6 @@ def _prune():
         _queue[:] = [c for c in _queue if now - c["ts"] < COMMAND_TTL]
 
 @app.route("/push", methods=["POST"])
-@limiter.limit("30 per minute")
 def push():
     if request.headers.get("X-Token") != API_TOKEN: return jsonify(ok=False, err="bad token"), 403
     data = request.get_json(silent=True) or {}
@@ -38,7 +28,6 @@ def push():
     return jsonify(ok=True, id=cid)
 
 @app.route("/poll", methods=["GET"])
-@limiter.limit("60 per minute")
 def poll():
     if request.headers.get("X-Token") != API_TOKEN: return jsonify(ok=False, err="bad token"), 403
     name = (request.args.get("name") or "").strip().lower()
@@ -65,17 +54,15 @@ def online():
     with _lock: out = [n for n, t in _presence.items() if now - t < PRESENCE_TTL]
     return jsonify(ok=True, online=out)
 
-# NEW ROUTE: Serves your main.lua directly from Render
+# This serves your main.lua directly from Render
 @app.route("/script", methods=["GET"])
 def serve_script():
     try:
-        # Looks for main.lua in the same folder as bridge.py
         with open("main.lua", "r") as f:
             return f.read(), 200, {'Content-Type': 'text/plain'}
     except Exception:
-        return "Script not found.", 404
+        return "Script not found. Upload main.lua next to bridge.py", 404
 
 if __name__ == "__main__":
     from waitress import serve
-    print(f"bridge on http://127.0.0.1:{PORT}")
     serve(app, host="0.0.0.0", port=PORT)
